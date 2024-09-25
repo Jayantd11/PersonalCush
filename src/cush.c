@@ -256,7 +256,7 @@ handle_child_status(pid_t pid, int status) {
 
     for (e = list_begin(&job_list); e != list_end(&job_list); e = list_next(e)) {
         job = list_entry(e, struct job, elem);
-
+    //pid check
         if (job->num_processes_alive > 0) {
             break;
         }
@@ -273,7 +273,8 @@ handle_child_status(pid_t pid, int status) {
 
         if (job->num_processes_alive == 0) {
             printf("Job [%d] has completed\n", job->jid);
-            delete_job(job);
+            delete_job(job);//delete outside handle child status
+            termstate_sample();
         }
     }
     else if (WIFSIGNALED(status)) {
@@ -285,10 +286,109 @@ handle_child_status(pid_t pid, int status) {
         }
     }
     else if (WIFSTOPPED(status)) {
+        //check all three branches
+        //check if the stsus wants access to the tereminal
         job->status = STOPPED;
         printf("Process %d was stopped\n", pid);
         termstate_save(&job->saved_tty_state);
     }
+
+}
+void spawn_pipeline(struct ast_command_line *cline) {
+    struct ast_pipeline *pipeline;
+    pid_t pid;
+    int status;
+    
+    for (pipeline = cline->pipes; pipeline != NULL; pipeline = pipeline->next) {
+        posix_spawnattr_t attr;
+        posix_spawn_file_actions_t actions;
+
+        // Initialize attributes and file actions
+        posix_spawnattr_init(&attr);
+        posix_spawn_file_actions_init(&actions);
+
+        // Set process group and other attributes if needed
+        posix_spawnattr_setpgroup(&attr, 0);  // Set the process group ID
+        // You can set other attributes as required...
+
+        // Loop through commands in the pipeline
+        for (int i = 0; i < pipeline->ncommands; i++) {
+            char **argv = pipeline->commands[i].argv; // Assuming your struct has this field
+
+            // Setup file actions for redirection if applicable
+            if (pipeline->commands[i].input_fd != -1) {
+                posix_spawn_file_actions_adddup2(&actions, pipeline->commands[i].input_fd, STDIN_FILENO);
+            }
+            if (pipeline->commands[i].output_fd != -1) {
+                posix_spawn_file_actions_adddup2(&actions, pipeline->commands[i].output_fd, STDOUT_FILENO);
+            }
+
+            // Call posix_spawnp to create the child process
+            if (posix_spawnp(&pid, argv[0], &actions, &attr, argv, environ) != 0) {
+                perror("posix_spawnp failed");
+                // Handle error (clean up, etc.)
+                break;
+            }
+
+            // Add the job to your job list (implement your job list management)
+            add_job_to_list(pid, &pipeline->commands[i]);
+
+            // Clean up actions for the next command
+            posix_spawn_file_actions_destroy(&actions);
+            posix_spawnattr_destroy(&attr);
+        }
+
+        // Wait for the job to finish
+        waitpid(pid, &status, 0);
+    }
+}
+
+bool handle_builtin(struct ast_command *cmd) {
+    if (strcmp(cmd->argv[0], "jobs") == 0) {
+        jobs_command();
+        return true;
+    }
+    if (strcmp(cmd->argv[0], "fg") == 0) {
+        if (cmd->argv[1]) {
+            int job_id = atoi(cmd->argv[1]);
+            fg_command(job_id);
+        } else {
+            printf("fg: job id required\n");
+        }
+        return true;
+    }
+    if (strcmp(cmd->argv[0], "bg") == 0) {
+        if (cmd->argv[1]) {
+            int job_id = atoi(cmd->argv[1]);
+            bg_command(job_id);
+        } else {
+            printf("bg: job id required\n");
+        }
+        return true;
+    }
+    if (strcmp(cmd->argv[0], "kill") == 0) {
+        if (cmd->argv[1]) {
+            int job_id = atoi(cmd->argv[1]);
+            kill_command(job_id);
+        } else {
+            printf("kill: job id required\n");
+        }
+        return true;
+    }
+    if (strcmp(cmd->argv[0], "stop") == 0) {
+        if (cmd->argv[1]) {
+            int job_id = atoi(cmd->argv[1]);
+            stop_command(job_id);
+        } else {
+            printf("stop: job id required\n");
+        }
+        return true;
+    }
+    if (strcmp(cmd->argv[0], "exit") == 0) {
+        exit_command();
+        return true;
+    }
+    return false;
 }
 
 int main(int ac, char *av[]) {
@@ -308,6 +408,7 @@ int main(int ac, char *av[]) {
     termstate_init();
 
     /* Read/eval loop. */
+    //before proccesing the command line check for jobs with no active proccess and delete them
     for (;;) {
 
         /* If you fail this assertion, you were about to enter readline()
@@ -356,7 +457,7 @@ int main(int ac, char *av[]) {
          * manage the lifetime of the associated ast_pipelines.
          * Otherwise, freeing here will cause use-after-free errors.
          */
-        ast_command_line_free(cline);
+        ast_command_line_free(cline); // comment this out later
     }
     return 0;
 }
@@ -435,3 +536,11 @@ void exit_command() {
     exit(0);
 }
 
+//make method to call posix spawn
+//take in pipeline 
+//decide when to make job or not
+//loop through commands in pipeline addup2 for redirection
+//settgroup 0 to make iot process grp record gpid
+//record pids so i can track
+//terminal control handler
+//asserted all loop all comands and ad jobs to joblist then wait for job
