@@ -13,6 +13,7 @@
 #include <termios.h>
 #include <sys/wait.h>
 #include <assert.h>
+#include <spawn.h>
 
 /* Since the handed out code contains a number of unused functions. */
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -236,28 +237,61 @@ wait_for_job(struct job *job)
     }
 }
 
-
-
+/*
+ * Step 1. Given the pid, determine which job this pid is a part of
+ *         (how to do this is not part of the provided code.)
+ * Step 2. Determine what status change occurred using the
+ *         WIF*() macros.
+ * (three options: exits, terminates with a signal, stopped)
+ * Step 3. Update the job status accordingly, and adjust
+ *         num_processes_alive if appropriate.
+ *         If a process was stopped, save the terminal state.
+ */
 static void
-handle_child_status(pid_t pid, int status)
-{
+handle_child_status(pid_t pid, int status) {
     assert(signal_is_blocked(SIGCHLD));
 
-    /* To be implemented. 
-     * Step 1. Given the pid, determine which job this pid is a part of
-     *         (how to do this is not part of the provided code.)
-     * Step 2. Determine what status change occurred using the
-     *         WIF*() macros.
-     * Step 3. Update the job status accordingly, and adjust 
-     *         num_processes_alive if appropriate.
-     *         If a process was stopped, save the terminal state.
-     */
+    struct job *job = NULL;
+    struct list_elem *e;
 
+    for (e = list_begin(&job_list); e != list_end(&job_list); e = list_next(e)) {
+        job = list_entry(e, struct job, elem);
+
+        if (job->num_processes_alive > 0) {
+            break;
+        }
+    }
+    if (!job) {
+        printf("No job found for process %d\n", pid);
+        return; // No matching job found
+    }
+
+    // Step 2: Check the status of the child process
+    if (WIFEXITED(status)) {
+        job->num_processes_alive--;
+        printf("Process %d exited with status %d\n", pid, WEXITSTATUS(status));
+
+        if (job->num_processes_alive == 0) {
+            printf("Job [%d] has completed\n", job->jid);
+            delete_job(job);
+        }
+    }
+    else if (WIFSIGNALED(status)) {
+        printf("Process %d was terminated by signal %d\n", pid, WTERMSIG(status));
+        job->num_processes_alive--;
+        if (job->num_processes_alive == 0) {
+            printf("Job [%d] has been terminated\n", job->jid);
+            delete_job(job);
+        }
+    }
+    else if (WIFSTOPPED(status)) {
+        job->status = STOPPED;
+        printf("Process %d was stopped\n", pid);
+        termstate_save(&job->saved_tty_state);
+    }
 }
 
-int
-main(int ac, char *av[])
-{
+int main(int ac, char *av[]) {
     int opt;
 
     /* Process command-line arguments. See getopt(3) */
@@ -305,7 +339,8 @@ main(int ac, char *av[])
         if (cline == NULL)                  /* Error in command line */
             continue;
 
-        if (list_empty(&cline->pipes)) {    /* User hit enter */
+        if (list_empty(&cline->pipes))
+        { /* User hit enter */
             ast_command_line_free(cline);
             continue;
         }
@@ -325,3 +360,78 @@ main(int ac, char *av[])
     }
     return 0;
 }
+
+void jobs_command() {
+    struct list_elem *e;
+    for (e = list_begin(&job_list); e != list_end(&job_list); e = list_next(e)) {
+        struct job *job = list_entry(e, struct job, elem);
+        print_job(job);  
+    }
+}
+
+void fg_command(int job_id) {
+    struct job *job = get_job_from_jid(job_id);
+    
+    if (job) {
+        job->status = FOREGROUND;
+        tcsetpgrp(STDIN_FILENO, job->jid);        
+        kill(-job->jid, SIGCONT);
+        wait_for_job(job);
+        termstate_give_terminal_back_to_shell();
+    } else {
+        printf("No such job\n");
+    }
+}
+
+void bg_command(int job_id) {
+    struct job *job = get_job_from_jid(job_id);
+    
+    if (job && job->status == STOPPED) {
+        job->status = BACKGROUND;
+        printf("Resuming job [%d] in background\n", job->jid);
+        kill(-job->jid, SIGCONT);
+    } else {
+        printf("No such stopped job\n");
+    }
+}
+
+void kill_command(int job_id) {
+    struct job *job = get_job_from_jid(job_id);
+    
+    if (job) {
+        printf("Killing job [%d]\n", job->jid);
+        kill(-job->jid, SIGKILL);
+    } else {
+        printf("No such job\n");
+    }
+}
+
+void stop_command(int job_id) {
+    struct job *job = get_job_from_jid(job_id);
+    
+    if (job) {
+        printf("Stopping job [%d]\n", job->jid);
+        kill(-job->jid, SIGTSTP);  
+        job->status = STOPPED;
+    } 
+    else {
+        printf("No such job\n");
+    }
+}
+
+void exit_command() {
+    struct list_elem *e = list_begin(&job_list);
+    
+    while (e != list_end(&job_list)) {
+        struct job *job = list_entry(e, struct job, elem);
+        
+        printf("Killing job [%d] before exiting\n", job->jid);
+        kill(-job->jid, SIGKILL);
+        e = list_remove(e);
+        delete_job(job);
+    }
+    
+    printf("Exiting shell...\n");
+    exit(0);
+}
+
