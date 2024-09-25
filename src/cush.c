@@ -373,7 +373,7 @@ void fg_command(int job_id) {
     struct job *job = get_job_from_jid(job_id);
     
     if (job) {
-        job->status = FOREGROUND;
+        job->status = FOREGROUND; 
         tcsetpgrp(STDIN_FILENO, job->jid);        
         kill(-job->jid, SIGCONT);
         wait_for_job(job);
