@@ -14,7 +14,7 @@
 #include <sys/wait.h>
 #include <assert.h>
 #include <spawn.h>
-
+#include <fcntl.h>
 /* Since the handed out code contains a number of unused functions. */
 #pragma GCC diagnostic ignored "-Wunused-function"
 
@@ -36,6 +36,7 @@ usage(char *progname)
 }
 
 /* Build a prompt */
+//BUILD THE FUCKING PROMT U CUNT
 static char *
 build_prompt(void)
 {
@@ -61,6 +62,7 @@ struct job {
                                         stopped after having been in foreground */
 
     /* Add additional fields here if needed. */
+    //ADD list pids tty gpid
 };
 
 /* Utility functions for job list management.
@@ -90,6 +92,10 @@ add_job(struct ast_pipeline *pipe)
     struct job * job = malloc(sizeof *job);
     job->pipe = pipe;
     job->num_processes_alive = 0;
+    //make a list of pids
+    //gpid
+    //tty saved
+    //parse pipe?
     list_push_back(&job_list, &job->elem);
     for (int i = 1; i < MAXJOBS; i++) {
         if (jid2job[i] == NULL) {
@@ -256,17 +262,22 @@ handle_child_status(pid_t pid, int status) {
 
     for (e = list_begin(&job_list); e != list_end(&job_list); e = list_next(e)) {
         job = list_entry(e, struct job, elem);
-    //pid check
+    
         if (job->num_processes_alive > 0) {
-            break;
+
+            if (getpgid(pid) == job->jid) {
+                goto job_found;  // Job found, exit the loop
+            }
+
         }
     }
-    if (!job) {
-        printf("No job found for process %d\n", pid);
-        return; // No matching job found
-    }
 
+    printf("No job found for process %d\n", pid);
+    return;
+
+    job_found:
     // Step 2: Check the status of the child process
+    //pid check if statement chekck pid throught list iterartion
     if (WIFEXITED(status)) {
         job->num_processes_alive--;
         printf("Process %d exited with status %d\n", pid, WEXITSTATUS(status));
@@ -288,18 +299,31 @@ handle_child_status(pid_t pid, int status) {
     else if (WIFSTOPPED(status)) {
         //check all three branches
         //check if the stsus wants access to the tereminal
+        //use the needs terminal frok job struct
         job->status = STOPPED;
         printf("Process %d was stopped\n", pid);
         termstate_save(&job->saved_tty_state);
     }
 
 }
-void spawn_pipeline(struct ast_command_line *cline) {
-    struct ast_pipeline *pipeline;
+//make method to call posix spawn
+//take in pipeline 
+//decide when to make job or not
+//loop through commands in pipeline addup2 for redirection
+//settgroup 0 to make iot process grp record gpid
+//record pids so i can track
+//terminal control handler
+//asserted all loop all comands and ad jobs to joblist then wait for job
+void poisix_spawn_handler(struct ast_command_line *cline) {
     pid_t pid;
     int status;
-    
-    for (pipeline = cline->pipes; pipeline != NULL; pipeline = pipeline->next) {
+
+    // Iterate over pipelines in the command line
+    for (struct list_elem *e = list_begin(&cline->pipes); 
+         e != list_end(&cline->pipes); 
+         e = list_next(e)) {
+        struct ast_pipeline *pipeline = list_entry(e, struct ast_pipeline, elem);
+
         posix_spawnattr_t attr;
         posix_spawn_file_actions_t actions;
 
@@ -307,38 +331,53 @@ void spawn_pipeline(struct ast_command_line *cline) {
         posix_spawnattr_init(&attr);
         posix_spawn_file_actions_init(&actions);
 
-        // Set process group and other attributes if needed
-        posix_spawnattr_setpgroup(&attr, 0);  // Set the process group ID
-        // You can set other attributes as required...
+        // Combine desired flags
+        int flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_USEVFORK; // Combine flags here
 
-        // Loop through commands in the pipeline
-        for (int i = 0; i < pipeline->ncommands; i++) {
-            char **argv = pipeline->commands[i].argv; // Assuming your struct has this field
+        // Set the process group and other desired flags
+        posix_spawnattr_setpgroup(&attr, 0); // Create a new process group
+        posix_spawnattr_setflags(&attr, flags); // Set combined flags
+
+
+        // Iterate over commands in the current pipeline
+        for (struct list_elem *cmd_elem = list_begin(&pipeline->commands); 
+             cmd_elem != list_end(&pipeline->commands); 
+             cmd_elem = list_next(cmd_elem)) {
+            struct ast_command *cmd = list_entry(cmd_elem, struct ast_command, elem);
+            char **argv = cmd->argv;
 
             // Setup file actions for redirection if applicable
-            if (pipeline->commands[i].input_fd != -1) {
-                posix_spawn_file_actions_adddup2(&actions, pipeline->commands[i].input_fd, STDIN_FILENO);
+            if (pipeline->iored_input) {
+                posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_input, O_RDONLY), STDIN_FILENO);
             }
-            if (pipeline->commands[i].output_fd != -1) {
-                posix_spawn_file_actions_adddup2(&actions, pipeline->commands[i].output_fd, STDOUT_FILENO);
+            if (pipeline->iored_output) {
+                int flags = pipeline->append_to_output ? O_APPEND | O_WRONLY | O_CREAT : O_WRONLY | O_CREAT;
+                posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_output, flags, 0644), STDOUT_FILENO);
             }
+
+            // // For file redirection
+            // if (pipeline->iored_input) {
+            //     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, pipeline->iored_input, O_RDONLY, 0);
+            // }
+            // if (pipeline->iored_output) {
+            //     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            // }
 
             // Call posix_spawnp to create the child process
             if (posix_spawnp(&pid, argv[0], &actions, &attr, argv, environ) != 0) {
                 perror("posix_spawnp failed");
-                // Handle error (clean up, etc.)
                 break;
             }
 
-            // Add the job to your job list (implement your job list management)
-            add_job_to_list(pid, &pipeline->commands[i]);
+            // Add the job 
+            add_job(pipeline);
 
             // Clean up actions for the next command
             posix_spawn_file_actions_destroy(&actions);
             posix_spawnattr_destroy(&attr);
         }
 
-        // Wait for the job to finish
+        // Wait for the last job in the pipeline to finish
         waitpid(pid, &status, 0);
     }
 }
@@ -446,8 +485,17 @@ int main(int ac, char *av[]) {
             continue;
         }
 
-        ast_command_line_print(cline);      /* Output a representation of
-                                               the entered command line */
+        //handle background jobs signal block for loop use posiwx spawn
+        //for loop iterate through list
+        //enter pipeline
+        //add job 
+        //execute curr job
+        //if status foreground wait for job
+        //if background curr job jid curr job gpid
+
+        //delete completed jobs iterate through list check if no processes print done otherwise remove from list
+        //unblock and give back the terminal
+
 
         /* Free the command line.
          * This will free the ast_pipeline objects still contained
@@ -457,7 +505,7 @@ int main(int ac, char *av[]) {
          * manage the lifetime of the associated ast_pipelines.
          * Otherwise, freeing here will cause use-after-free errors.
          */
-        ast_command_line_free(cline); // comment this out later
+        //ast_command_line_free(cline); // comment this out later
     }
     return 0;
 }
@@ -536,11 +584,3 @@ void exit_command() {
     exit(0);
 }
 
-//make method to call posix spawn
-//take in pipeline 
-//decide when to make job or not
-//loop through commands in pipeline addup2 for redirection
-//settgroup 0 to make iot process grp record gpid
-//record pids so i can track
-//terminal control handler
-//asserted all loop all comands and ad jobs to joblist then wait for job
