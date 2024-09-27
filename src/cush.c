@@ -63,6 +63,12 @@ struct job {
 
     /* Add additional fields here if needed. */
     //ADD list pids tty gpid
+
+    pid_t gpid;              /* Group process ID of the job */
+    pid_t *pids;             /* Array of PIDs for processes in the job */
+    int num_pids;            /* Number of processes in the job */
+    bool tty_allocated;      /* Flag indicating whether the job has allocated a terminal */
+
 };
 
 /* Utility functions for job list management.
@@ -91,10 +97,20 @@ add_job(struct ast_pipeline *pipe)
 {
     struct job * job = malloc(sizeof *job);
     job->pipe = pipe;
-    job->num_processes_alive = 0;
+
+    int num_commands = 0;
+    struct list_elem *e;
+    for (e = list_begin(&pipe->commands); e != list_end(&pipe->commands); e = list_next(e)) {
+        num_commands++;
+    }
     //make a list of pids
+    job->num_processes_alive = num_commands;
+    job->pids =malloc(num_commands * sizeof(pid_t));
+    job->num_pids = num_commands;
     //gpid
+    job->gpid = -1;
     //tty saved
+    termstate_sample();
     //parse pipe?
     list_push_back(&job_list, &job->elem);
     for (int i = 1; i < MAXJOBS; i++) {
@@ -259,25 +275,31 @@ handle_child_status(pid_t pid, int status) {
 
     struct job *job = NULL;
     struct list_elem *e;
+    bool pid_found = false;
 
     for (e = list_begin(&job_list); e != list_end(&job_list); e = list_next(e)) {
         job = list_entry(e, struct job, elem);
     
         if (job->num_processes_alive > 0) {
 
-            if (getpgid(pid) == job->jid) {
-                goto job_found;  // Job found, exit the loop
+            for (int i = 0; i < job->num_pids; i++) {
+                //pid check if statement chekck pid throught list iterartion
+                if (job->pids[i] == pid) {
+                    pid_found = true;
+                    goto job_found;
+                }
             }
 
         }
     }
 
-    printf("No job found for process %d\n", pid);
-    return;
+    if (!pid_found) {
+        printf("No job found for process %d\n", pid);
+        return;
+    }
 
     job_found:
     // Step 2: Check the status of the child process
-    //pid check if statement chekck pid throught list iterartion
     if (WIFEXITED(status)) {
         job->num_processes_alive--;
         printf("Process %d exited with status %d\n", pid, WEXITSTATUS(status));
