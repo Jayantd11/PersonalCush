@@ -22,23 +22,15 @@
 #include "signal_support.h"
 #include "shell-ast.h"
 #include "utils.h"
-#include "list.h"
-#include "list.c"
-#include "signal_support.c"
-#include "termstate_management.c"
-#include "utils.c"
-#include "shell-ast.c"
 
-
-
-
+static void handle_child_status(pid_t pid, int status);
 static void handle_child_status(pid_t pid, int status);
 void stop_command(int job_id);
 void kill_command(int job_id);
-void exit_command();
+void exit_command(void);
 void bg_command(int job_id);
 void fg_command(int job_id);
-void jobs_command();
+void jobs_command(void);
 void poisix_spawn_handler(struct ast_command_line *cline);
 bool handle_builtin(struct ast_command *cmd);
 
@@ -525,17 +517,70 @@ int main(int ac, char *av[]) {
         }
 
         //handle background jobs signal block for loop use posiwx spawn
-        //for loop iterate through list
-        //enter pipeline
-        //add job 
-        //execute curr job
-        //if status foreground wait for job
-        //if background curr job jid curr job gpid
+        for (struct list_elem *e = list_begin(&cline->pipes); e != list_end(&cline->pipes); e = list_next(e)) {
+            struct ast_pipeline *pipeline = list_entry(e, struct ast_pipeline, elem);
+            // Block SIGCHLD while setting up the job
+            signal_block(SIGCHLD);
 
-        //delete completed jobs iterate through list check if no processes print done otherwise remove from list
-        //unblock and give back the terminal
+            // Add job to job list
+            struct job *new_job = add_job(pipeline);
+            //for loop iterate through list
+            pid_t first_pid = -1;  // To track the group process ID (gpid)
+            for (struct list_elem *cmd_elem = list_begin(&pipeline->commands);cmd_elem != list_end(&pipeline->commands);cmd_elem = list_next(cmd_elem)) {
+                struct ast_command *cmd = list_entry(cmd_elem, struct ast_command, elem);
+                pid_t pid;
 
+                // Use posix_spawn to execute the command
+                if (posix_spawnp(&pid, cmd->argv[0], NULL, NULL, cmd->argv, environ) != 0) {
+                    perror("posix_spawnp failed");
+                    continue;  // Skip to the next command on failure
+                }
 
+                // If it's the first command, set the job's group PID (gpid)
+                if (first_pid == -1) {
+                    first_pid = pid;
+                    new_job->gpid = pid;
+                    setpgid(pid, pid);  // Set the first process as the group leader
+                } else {
+                    setpgid(pid, first_pid);  // Set subsequent commands to the same process group
+                }
+
+                // Track the new process in the job's list of PIDs
+                new_job->pids[new_job->num_processes_alive++] = pid;
+            }
+
+        if (!pipeline->bg_job) {
+            //if status foreground wait for job
+            new_job->status = FOREGROUND;
+            tcsetpgrp(STDIN_FILENO, new_job->gpid);  // Give terminal control to the job
+            wait_for_job(new_job);  // Wait for the job to complete
+            termstate_give_terminal_back_to_shell();  // Return terminal control to the shell
+        } else {
+            //if background curr job jid curr job gpid
+            new_job->status = BACKGROUND;
+            printf("[%d] %d\n", new_job->jid, new_job->gpid);  // Print background job info
+        }
+
+        // Unblock signals once done
+        signal_unblock(SIGCHLD);
+    }
+
+    //delete completed jobs iterate through list check if no processes print done otherwise remove from list
+    struct list_elem *e = list_begin(&job_list);
+    while (e != list_end(&job_list)) {
+        struct job *job = list_entry(e, struct job, elem);
+
+        if (job->num_processes_alive == 0) {  // Job is done
+            printf("Job [%d] done\n", job->jid);
+            e = list_remove(e);  // Remove job from the list
+            delete_job(job);     // Free job memory
+        } else {
+            e = list_next(e);  // Move to the next job
+        }
+    }
+
+    //unblock and give back the terminal
+    signal_unblock(SIGCHLD);
         /* Free the command line.
          * This will free the ast_pipeline objects still contained
          * in the ast_command_line.  Once you implement a job list
@@ -622,4 +667,3 @@ void exit_command() {
     printf("Exiting shell...\n");
     exit(0);
 }
-
