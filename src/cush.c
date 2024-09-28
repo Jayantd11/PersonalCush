@@ -22,8 +22,25 @@
 #include "signal_support.h"
 #include "shell-ast.h"
 #include "utils.h"
+#include "list.h"
+#include "list.c"
+#include "signal_support.c"
+#include "termstate_management.c"
+#include "utils.c"
+#include "shell-ast.c"
+
+
+
 
 static void handle_child_status(pid_t pid, int status);
+void stop_command(int job_id);
+void kill_command(int job_id);
+void exit_command();
+void bg_command(int job_id);
+void fg_command(int job_id);
+void jobs_command();
+void poisix_spawn_handler(struct ast_command_line *cline);
+bool handle_builtin(struct ast_command *cmd);
 
 static void
 usage(char *progname)
