@@ -1,0 +1,5 @@
+[?2004hcush> stty eof ^Estty eof ^E
+
+[?2004l[1mlist.c:260:20:[1m[31m runtime error: [1m[0m[1mmember access within misaligned address 0x000000000e22 for type 'struct list_elem', which requires 8 byte alignment[1m[0m
+[1m0x000000000e22:[1m[30m note: [1m[0mpointer points here[1m[0m
+<memory cannot be printed>
