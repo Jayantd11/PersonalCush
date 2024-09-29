@@ -118,8 +118,7 @@ add_job(struct ast_pipeline *pipe)
     job->pids =malloc(num_commands * sizeof(pid_t));
     //gpid
     job->gpid = -1;
-    //tty saved
-    termstate_sample();
+    
     //parse pipe?
     list_push_back(&job_list, &job->elem);
     for (int i = 1; i < MAXJOBS; i++) {
@@ -246,6 +245,13 @@ static void
 wait_for_job(struct job *job)
 {
     assert(signal_is_blocked(SIGCHLD));
+    
+    struct sigaction sa_ignore, sa_oldint, sa_oldtstp;
+    sa_ignore.sa_handler = SIG_IGN;
+    sigemptyset(&sa_ignore.sa_mask);
+    sa_ignore.sa_flags = 0;
+    sigaction(SIGINT, &sa_ignore, &sa_oldint);
+    sigaction(SIGTSTP, &sa_ignore, &sa_oldtstp);
 
     while (job->status == FOREGROUND && job->num_processes_alive > 0) {
         int status;
@@ -266,6 +272,9 @@ wait_for_job(struct job *job)
         else
             utils_fatal_error("waitpid failed, see code for explanation");
     }
+
+    sigaction(SIGINT, &sa_oldint, NULL);
+    sigaction(SIGTSTP, &sa_oldtstp, NULL);
 
     if (job->num_processes_alive == 0) {
         delete_job(job);
@@ -297,12 +306,15 @@ void handle_child_status(pid_t pid, int status) {
                 if (WIFEXITED(status) || WIFSIGNALED(status)) {
                     current_job->num_processes_alive--;
                     if (current_job->num_processes_alive == 0) {
-                        // Mark the job as completed
+                        if (current_job->status == FOREGROUND)
+                            termstate_give_terminal_back_to_shell();
                         current_job->status = COMPLETED; // Use COMPLETED status
                     }
                 } else if (WIFSTOPPED(status)) {
                     current_job->status = STOPPED;
                     termstate_save(&current_job->saved_tty_state);
+                } else if (WIFCONTINUED(status)) {
+                    current_job->status = (current_job->status == STOPPED) ? BACKGROUND : current_job->status;
                 }
                 return;
             }
@@ -450,6 +462,10 @@ int main(int ac, char *av[]) {
     signal_set_handler(SIGCHLD, sigchld_handler);
     termstate_init();
 
+    pid_t shell_pgid = getpid();
+    setpgid(shell_pgid, shell_pgid);
+    tcsetpgrp(STDIN_FILENO, shell_pgid);
+
     /* Read/eval loop. */
     //before proccesing the command line check for jobs with no active proccess and delete them
     for (;;) {
@@ -490,47 +506,63 @@ int main(int ac, char *av[]) {
         }
 
         //handle background jobs signal block for loop use posiwx spawn
+        /* Reap completed background jobs */
+        struct list_elem *e = list_begin(&job_list);
+        while (e != list_end(&job_list)) {
+            struct job *job = list_entry(e, struct job, elem);
+            if (job->num_processes_alive == 0 && job->status != STOPPED) {
+                e = list_remove(e);  // Remove job from the list
+                delete_job(job);     // Free job memory
+            } else {
+                e = list_next(e);  // Move to the next job
+            }
+        }
+
         for (struct list_elem *e = list_begin(&cline->pipes); e != list_end(&cline->pipes); e = list_next(e)) {
             struct ast_pipeline *pipeline = list_entry(e, struct ast_pipeline, elem);
-            // Block SIGCHLD while setting up the job
-            signal_block(SIGCHLD);
 
             struct ast_command *first_cmd = list_entry(list_begin(&pipeline->commands), struct ast_command, elem);
             if (handle_builtin(first_cmd)) {
-                signal_unblock(SIGCHLD);
                 continue;
             }
-
+            signal_block(SIGCHLD);
             struct job *new_job = add_job(pipeline);
             //for loop iterate through list
             pid_t first_pid = -1;  // To track the group process ID (gpid)
             int pid_index = 0;
-            // Prepare file actions for I/O redirection
-            posix_spawn_file_actions_t actions;
-            posix_spawn_file_actions_init(&actions);
-            // Handle input redirection
-            if (pipeline->iored_input) {
-                posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, pipeline->iored_input, O_RDONLY, 0);
-            }
-            // Handle output redirection
-            if (pipeline->iored_output) {
-                int flags = O_WRONLY | O_CREAT;
-                if (pipeline->append_to_output) {
-                    flags |= O_APPEND;
-                } else {
-                    flags |= O_TRUNC;
+            
+            int num_cmds = list_size(&pipeline->commands);
+            int fds[2 * (num_cmds - 1)];
+
+            /* Set up pipes */
+            
+            for (int i = 0; i < num_cmds - 1; i++) {
+                if (pipe(&fds[i * 2]) < 0) {
+                    perror("pipe");
+                    exit(EXIT_FAILURE);
                 }
-                posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
             }
             
-            for (struct list_elem *cmd_elem = list_begin(&pipeline->commands);cmd_elem != list_end(&pipeline->commands);cmd_elem = list_next(cmd_elem)) {
+            int cmd_num = 0;
+            for (struct list_elem *cmd_elem = list_begin(&pipeline->commands);cmd_elem != list_end(&pipeline->commands);cmd_elem = list_next(cmd_elem), cmd_num++) {
                 struct ast_command *cmd = list_entry(cmd_elem, struct ast_command, elem);
                 pid_t pid;
 
                 posix_spawnattr_t attr;
                 posix_spawnattr_init(&attr);
-                short flags = POSIX_SPAWN_SETPGROUP;
-                posix_spawnattr_setflags(&attr, flags);
+sigset_t empty_set;
+                sigemptyset(&empty_set);
+                posix_spawnattr_setsigmask(&attr, &empty_set);
+                sigset_t default_signals;
+                sigemptyset(&default_signals);
+                sigaddset(&default_signals, SIGINT);
+                sigaddset(&default_signals, SIGQUIT);
+                sigaddset(&default_signals, SIGTSTP);
+                sigaddset(&default_signals, SIGTTIN);
+                sigaddset(&default_signals, SIGTTOU);
+                sigaddset(&default_signals, SIGCHLD);
+                posix_spawnattr_setsigdefault(&attr, &default_signals);
+                short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETPGROUP;                posix_spawnattr_setflags(&attr, flags);
 
                 if (first_pid == -1) {
                     // For the first process, create a new process group
@@ -540,15 +572,46 @@ int main(int ac, char *av[]) {
                     posix_spawnattr_setpgroup(&attr, new_job->gpid);
                 }
 
+                posix_spawn_file_actions_t actions;
+                posix_spawn_file_actions_init(&actions);
+                if (cmd_num == 0 && pipeline->iored_input) {
+                    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, pipeline->iored_input, O_RDONLY, 0);
+                }
+                /* Handle output redirection for the last command */
+                if (cmd_num == num_cmds - 1 && pipeline->iored_output) {
+                    int flags = O_WRONLY | O_CREAT;
+                    if (pipeline->append_to_output) {
+                        flags |= O_APPEND;
+                    } else {
+                        flags |= O_TRUNC;
+                    }
+                    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
+                }
+                /* Set up pipes */
+                if (num_cmds > 1) {
+                    if (cmd_num > 0) {
+                        posix_spawn_file_actions_adddup2(&actions, fds[(cmd_num - 1) * 2], STDIN_FILENO);
+                    }
+                    /* If not the last command, write to the next pipe */
+                // Use posix_spawnp to execute the command with attributes and actions
+                    if (cmd_num < num_cmds - 1) {
+                        posix_spawn_file_actions_adddup2(&actions, fds[cmd_num * 2 + 1], STDOUT_FILENO);
+                    }
+                }
+                /* Close all pipe fds */
+                for (int i = 0; i < 2 * (num_cmds - 1); i++) {
+                    posix_spawn_file_actions_addclose(&actions, fds[i]);
+                }
                 // If it's the first command, set the job's group PID (gpid)
                 // Use posix_spawnp to execute the command with attributes and actions
                 if (posix_spawnp(&pid, cmd->argv[0], &actions, &attr, cmd->argv, environ) != 0) {
                     perror("posix_spawnp failed");
                     posix_spawnattr_destroy(&attr);
+                    posix_spawn_file_actions_destroy(&actions);
                     continue;
                 }
                 posix_spawnattr_destroy(&attr);
-
+                posix_spawn_file_actions_destroy(&actions);
                 // If it's the first command, set the job's group PID (gpid)
                 if (first_pid == -1) {
                     first_pid = pid;
@@ -560,7 +623,9 @@ int main(int ac, char *av[]) {
                 new_job->num_processes_alive++;
             }
         
-        posix_spawn_file_actions_destroy(&actions);
+        for (int i = 0; i < 2 * (num_cmds - 1); i++) {
+                close(fds[i]);
+            }
 
         if (new_job->num_pids == 0) {
             // No processes were spawned successfully
@@ -573,7 +638,6 @@ int main(int ac, char *av[]) {
             new_job->status = FOREGROUND;
             tcsetpgrp(STDIN_FILENO, new_job->gpid);  // Give terminal control to the job
             wait_for_job(new_job);  // Wait for the job to complete
-            termstate_give_terminal_back_to_shell();  // Return terminal control to the shell
         } else {
             //if background curr job jid curr job gpid
             new_job->status = BACKGROUND;
@@ -584,18 +648,7 @@ int main(int ac, char *av[]) {
         signal_unblock(SIGCHLD);
     }
 
-    //delete completed jobs iterate through list check if no processes print done otherwise remove from list
-    struct list_elem *e = list_begin(&job_list);
-    while (e != list_end(&job_list)) {
-        struct job *job = list_entry(e, struct job, elem);
-
-        if (job->num_processes_alive == 0 && job->status != STOPPED) {
-            e = list_remove(e);  // Remove job from the list
-            delete_job(job);     // Free job memory
-        } else {
-            e = list_next(e);  // Move to the next job
-        }
-    }
+    
 
         /* Free the command line.
          * This will free the ast_pipeline objects still contained
@@ -605,7 +658,7 @@ int main(int ac, char *av[]) {
          * manage the lifetime of the associated ast_pipelines.
          * Otherwise, freeing here will cause use-after-free errors.
          */
-        ast_command_line_free(cline);
+        free(cline);
     }
     return 0;
 }
@@ -627,7 +680,6 @@ void fg_command(int job_id) {
         tcsetpgrp(STDIN_FILENO, job->gpid);
         kill(-job->gpid, SIGCONT);
         wait_for_job(job);
-        termstate_give_terminal_back_to_shell();
         signal_unblock(SIGCHLD);
     } else {
         printf("No such job\n");
@@ -637,9 +689,11 @@ void fg_command(int job_id) {
 void bg_command(int job_id) {
     struct job *job = get_job_from_jid(job_id);
     
-    if (job && job->status == STOPPED) {
+    if (job && (job->status == STOPPED || job->status == COMPLETED)) {
         job->status = BACKGROUND;
-        printf("Resuming job [%d] in background\n", job->jid);
+        printf("[%d] ", job->jid);
+        print_cmdline(job->pipe);
+        printf("\n");
         kill(-job->gpid, SIGCONT);
     } else {
         printf("No such stopped job\n");
