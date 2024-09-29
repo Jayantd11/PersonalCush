@@ -185,7 +185,7 @@ print_cmdline(struct ast_pipeline *pipeline)
 static void
 print_job(struct job *job)
 {
-    printf("[%d]\t%s\t\t(", job->jid, get_status(job->status));
+    printf("[%d]+  %s                 (", job->jid, get_status(job->status));
     print_cmdline(job->pipe);
     printf(")\n");
 }
@@ -313,6 +313,10 @@ void handle_child_status(pid_t pid, int status) {
                 } else if (WIFSTOPPED(status)) {
                     current_job->status = STOPPED;
                     termstate_save(&current_job->saved_tty_state);
+                    printf("[%d]+  %s                 (", current_job->jid, get_status(current_job->status));
+                    print_cmdline(current_job->pipe);
+                    printf(")\n");
+                    termstate_give_terminal_back_to_shell();
                 } else if (WIFCONTINUED(status)) {
                     current_job->status = (current_job->status == STOPPED) ? BACKGROUND : current_job->status;
                 }
@@ -532,7 +536,7 @@ int main(int ac, char *av[]) {
             int pid_index = 0;
             
             int num_cmds = list_size(&pipeline->commands);
-            int fds[2 * (num_cmds - 1)];
+            int fds[2 * (num_cmds)];
 
             /* Set up pipes */
             
@@ -550,7 +554,7 @@ int main(int ac, char *av[]) {
 
                 posix_spawnattr_t attr;
                 posix_spawnattr_init(&attr);
-sigset_t empty_set;
+                sigset_t empty_set;
                 sigemptyset(&empty_set);
                 posix_spawnattr_setsigmask(&attr, &empty_set);
                 sigset_t default_signals;
@@ -678,6 +682,9 @@ void fg_command(int job_id) {
         signal_block(SIGCHLD);
         job->status = FOREGROUND; 
         tcsetpgrp(STDIN_FILENO, job->gpid);
+        print_cmdline(job->pipe);
+        printf("\n");
+        
         kill(-job->gpid, SIGCONT);
         wait_for_job(job);
         signal_unblock(SIGCHLD);
@@ -729,11 +736,13 @@ void exit_command() {
     
     while (e != list_end(&job_list)) {
         struct job *job = list_entry(e, struct job, elem);
-        
+        struct list_elem *next = list_next(e); // Advance iterator before removing
+
         printf("Killing job [%d] before exiting\n", job->jid);
         kill(-job->gpid, SIGKILL);
         e = list_remove(e);
         delete_job(job);
+        e = next;
     }
     
     printf("Exiting shell...\n");
