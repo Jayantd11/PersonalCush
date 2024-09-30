@@ -25,6 +25,7 @@
 #include "utils.h"
 
 static void handle_child_status(pid_t pid, int status);
+static pid_t shell_pgid;
 void stop_command(int job_id);
 void kill_command(int job_id);
 void exit_command(void);
@@ -246,6 +247,8 @@ wait_for_job(struct job *job)
 {
     assert(signal_is_blocked(SIGCHLD));
     
+    termstate_save(&job->saved_tty_state);
+
     struct sigaction sa_ignore, sa_oldint, sa_oldtstp;
     sa_ignore.sa_handler = SIG_IGN;
     sigemptyset(&sa_ignore.sa_mask);
@@ -301,14 +304,27 @@ void handle_child_status(pid_t pid, int status) {
         for (int i = 0; i < current_job->num_pids; i++) {
             if (current_job->pids[i] == pid) {
                 // Found the job containing pid
-                if (WIFEXITED(status) || WIFSIGNALED(status)) {
+                if (WIFEXITED(status)) {
                     current_job->num_processes_alive--;
                     if (current_job->num_processes_alive == 0) {
                         if (current_job->status == FOREGROUND)
                             termstate_give_terminal_back_to_shell();
                         current_job->status = COMPLETED; // Use COMPLETED status
                     }
-                } else if (WIFSTOPPED(status)) {
+                } 
+                else if (WIFSIGNALED(status)) {
+                    int sig = WTERMSIG(status);
+                    char *sig_name = strsignal(sig);
+                    printf("%s\n", sig_name);
+                    current_job->num_processes_alive--;
+                    if (current_job->status == FOREGROUND) {
+                        termstate_give_terminal_to(&current_job->saved_tty_state, shell_pgid);
+                        current_job->status = COMPLETED;
+                    } else if (current_job->num_processes_alive == 0) {
+                        current_job->status = COMPLETED;
+                    }
+                }
+                else if (WIFSTOPPED(status)) {
                     current_job->status = STOPPED;
                     termstate_save(&current_job->saved_tty_state);
                     printf("[%d]+  %s                 (", current_job->jid, get_status(current_job->status));
@@ -316,7 +332,9 @@ void handle_child_status(pid_t pid, int status) {
                     printf(")\n");
                     termstate_give_terminal_back_to_shell();
                 } else if (WIFCONTINUED(status)) {
-                    current_job->status = (current_job->status == STOPPED) ? BACKGROUND : current_job->status;
+                    if (current_job->status == STOPPED) {
+                        current_job->status = BACKGROUND;
+                    }
                 }
                 return;
             }
@@ -464,7 +482,7 @@ int main(int ac, char *av[]) {
     signal_set_handler(SIGCHLD, sigchld_handler);
     termstate_init();
 
-    pid_t shell_pgid = getpid();
+    shell_pgid = getpid();
     setpgid(shell_pgid, shell_pgid);
     tcsetpgrp(STDIN_FILENO, shell_pgid);
 
@@ -592,6 +610,7 @@ int main(int ac, char *av[]) {
                         flags |= O_TRUNC;
                     }
                     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
+                    
                 }
                 /* Set up pipes */
                 if (num_cmds > 1) {
