@@ -276,9 +276,7 @@ wait_for_job(struct job *job)
     sigaction(SIGINT, &sa_oldint, NULL);
     sigaction(SIGTSTP, &sa_oldtstp, NULL);
 
-    if (job->num_processes_alive == 0) {
-        delete_job(job);
-    }
+    
 }
 
 /*
@@ -516,21 +514,23 @@ int main(int ac, char *av[]) {
             struct job *job = list_entry(e, struct job, elem);
             if (job->num_processes_alive == 0 && job->status != STOPPED) {
                 e = list_remove(e);  // Remove job from the list
-                delete_job(job);     // Free job memory
+                delete_job(job);  // Remove job from the list
             } else {
                 e = list_next(e);  // Move to the next job
             }
         }
 
-        for (struct list_elem *e = list_begin(&cline->pipes); e != list_end(&cline->pipes); e = list_next(e)) {
-            struct ast_pipeline *pipeline = list_entry(e, struct ast_pipeline, elem);
-
+        struct list_elem *pipe_e = list_begin(&cline->pipes);
+        while (pipe_e != list_end(&cline->pipes)) {
+            struct ast_pipeline *pipeline = list_entry(pipe_e, struct ast_pipeline, elem);
             struct ast_command *first_cmd = list_entry(list_begin(&pipeline->commands), struct ast_command, elem);
             if (handle_builtin(first_cmd)) {
+                pipe_e = list_remove(pipe_e); // Remove the pipeline from cline->pipes
                 continue;
             }
             signal_block(SIGCHLD);
             struct job *new_job = add_job(pipeline);
+            pipe_e = list_remove(pipe_e); // Remove the pipeline from cline->pipes
             //for loop iterate through list
             pid_t first_pid = -1;  // To track the group process ID (gpid)
             int pid_index = 0;
@@ -548,7 +548,8 @@ int main(int ac, char *av[]) {
             }
             
             int cmd_num = 0;
-            for (struct list_elem *cmd_elem = list_begin(&pipeline->commands);cmd_elem != list_end(&pipeline->commands);cmd_elem = list_next(cmd_elem), cmd_num++) {
+            struct list_elem *cmd_elem = list_begin(&pipeline->commands);
+            while (cmd_elem != list_end(&pipeline->commands)) {
                 struct ast_command *cmd = list_entry(cmd_elem, struct ast_command, elem);
                 pid_t pid;
 
@@ -566,7 +567,8 @@ int main(int ac, char *av[]) {
                 sigaddset(&default_signals, SIGTTOU);
                 sigaddset(&default_signals, SIGCHLD);
                 posix_spawnattr_setsigdefault(&attr, &default_signals);
-                short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETPGROUP;                posix_spawnattr_setflags(&attr, flags);
+                short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETPGROUP;
+                posix_spawnattr_setflags(&attr, flags);
 
                 if (first_pid == -1) {
                     // For the first process, create a new process group
@@ -612,7 +614,7 @@ int main(int ac, char *av[]) {
                     perror("posix_spawnp failed");
                     posix_spawnattr_destroy(&attr);
                     posix_spawn_file_actions_destroy(&actions);
-                    continue;
+                    break;
                 }
                 posix_spawnattr_destroy(&attr);
                 posix_spawn_file_actions_destroy(&actions);
@@ -625,6 +627,9 @@ int main(int ac, char *av[]) {
                 new_job->pids[pid_index++] = pid;
                 new_job->num_pids++;
                 new_job->num_processes_alive++;
+
+                cmd_elem = list_next(cmd_elem);
+                cmd_num++;
             }
         
         for (int i = 0; i < 2 * (num_cmds - 1); i++) {
@@ -642,6 +647,7 @@ int main(int ac, char *av[]) {
             new_job->status = FOREGROUND;
             tcsetpgrp(STDIN_FILENO, new_job->gpid);  // Give terminal control to the job
             wait_for_job(new_job);  // Wait for the job to complete
+            termstate_give_terminal_back_to_shell();
         } else {
             //if background curr job jid curr job gpid
             new_job->status = BACKGROUND;
@@ -650,9 +656,8 @@ int main(int ac, char *av[]) {
 
         // Unblock signals once done
         signal_unblock(SIGCHLD);
+        //e = next_e; // Move to the next element
     }
-
-    
 
         /* Free the command line.
          * This will free the ast_pipeline objects still contained
@@ -662,7 +667,7 @@ int main(int ac, char *av[]) {
          * manage the lifetime of the associated ast_pipelines.
          * Otherwise, freeing here will cause use-after-free errors.
          */
-        free(cline);
+        ast_command_line_free(cline);
     }
     return 0;
 }
@@ -679,6 +684,10 @@ void fg_command(int job_id) {
     struct job *job = get_job_from_jid(job_id);
     
     if (job) {
+        if (job->status == COMPLETED) {
+            printf("Job [%d] has already completed\n", job->jid);
+            return;
+        }
         signal_block(SIGCHLD);
         job->status = FOREGROUND; 
         tcsetpgrp(STDIN_FILENO, job->gpid);
@@ -736,13 +745,11 @@ void exit_command() {
     
     while (e != list_end(&job_list)) {
         struct job *job = list_entry(e, struct job, elem);
-        struct list_elem *next = list_next(e); // Advance iterator before removing
 
         printf("Killing job [%d] before exiting\n", job->jid);
         kill(-job->gpid, SIGKILL);
         e = list_remove(e);
         delete_job(job);
-        e = next;
     }
     
     printf("Exiting shell...\n");
