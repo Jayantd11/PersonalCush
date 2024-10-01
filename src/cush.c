@@ -610,8 +610,7 @@ int main(int ac, char *av[]) {
                         flags |= O_TRUNC;
                     }
                     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
-                        posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
-
+                    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
                 }
                 /* Set up pipes */
                 if (num_cmds > 1) {
