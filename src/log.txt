@@ -1,10 +1,71 @@
-[?2004hcush> stty eof ^Estty eof ^E
+[?2004hcush> sleep 10 | sleep 9sleep 10 | sleep 9
 
-[?2004l[?2004hcush> sleep 1sleep 1
+[?2004l^Z[1]+  Stopped                 (sleep 10| sleep 9)
+[1]+  Stopped                 (sleep 10| sleep 9)
+[?2004hcush> jobsjobs
 
-[?2004l[?2004hcush> vimvim
+[?2004l[1]+  Stopped                 (sleep 10| sleep 9)
+[?2004hcush> bg 1bg 1
 
-[?2004l[?1049h[22;0;0t[>4;2m[?1h=[?2004h[?1004h[1;24r[?12h[?12l[22;2t[22;1t[27m[23m[29m[m[H[2J[2;1H▽[6n[2;1H  [3;1HPzz\[0%m[6n[3;1H           [1;1H[>c]10;?]11;?[?25l[2;1H[94m~                                                                                                                                                                                                       [3;1H~                                                                                                                                                                                                       [4;1H~                                                                                                                                                                                                       [5;1H~                                                                                                                                                                                                       [6;1H~                                                                                                                                                                                                       [7;1H~                                                                                                                                                                                                       [8;1H~                                                                                                                                                                                                       [9;1H~                                                                                                                                                                                                       [10;1H~                                                                                                                                                                                                       [11;1H~                                                                                                                                                                                                       [12;1H~                                                                                                                                                                                                       [13;1H~                                                                                                                                                                                                       [14;1H~                                                                                                                                                                                                       [15;1H~                                                                                                                                                                                                       [16;1H~                                                                                                                                                                                                       [17;1H~                                                                                                                                                                                                       [18;1H~                                                                                                                                                                                                       [19;1H~                                                                                                                                                                                                       [20;1H~                                                                                                                                                                                                       [21;1H~                                                                                                                                                                                                       [22;1H~                                                                                                                                                                                                       [23;1H~                                                                                                                                                                                                       [m[24;183H0,0-1[9CAll[6;92HVIM - Vi IMproved[8;93Hversion 8.2.2637[9;89Hby Bram Moolenaar et al.[10;84HModified by [34m<bugzilla@redhat.com>[m[11;79HVim is open source and freely distributable[13;89HSponsor Vim development![14;78Htype  :help sponsor[34m<Enter>[m    for information [16;78Htype  :q[34m<Enter>[m               to exit         [17;78Htype  :help[34m<Enter>[m  or  [34m<F1>[m  for on-line help[18;78Htype  :help version8[34m<Enter>[m   for version info[1;1H[?25hKilled
-[?2004hcush> sleep 1sleep 1
+[?2004l[1] sleep 10| sleep 9
+[?2004hcush> jobsjobs
 
-[?2004l[?2004hcush> 
+[?2004l[1]+  Running                 (sleep 10| sleep 9)
+[?2004hcush> kill 1kill 1
+
+[?2004lKilling job [1]
+[?2004hcush> Killed
+Killed
+ps --ppid 269209 -o pid,cmd,stat --no-headers | wc -lps --ppid 269209 -o pid,cmd,stat --no-headers | wc -l
+
+[?2004l2
+[?2004hcush> sleep 100 | sleep 99 | sleep 98 | sleep 97 &sleep 100 | sleep 99 | sleep 98 | sleep 97 &
+
+[?2004l[1] 269219
+[?2004hcush> ps --ppid 269209 -o pid,stat,comm --no-headersps --ppid 269209 -o pid,stat,comm --no-headers
+
+[?2004l 269219 S    sleep
+ 269220 S    sleep
+ 269221 S    sleep
+ 269222 S    sleep
+ 269223 R+   ps
+[?2004hcush> jobsjobs
+
+[?2004l[1]+  Running                 (sleep 100| sleep 99| sleep 98| sleep 97)
+[?2004hcush> stop 1stop 1
+
+[?2004lStopping job [1]
+[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
+[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
+[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
+[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
+[?2004hcush> ps --ppid 269209 -o pid,stat,comm --no-headersps --ppid 269209 -o pid,stat,comm --no-headers
+
+[?2004l 269219 T    sleep
+ 269220 T    sleep
+ 269221 T    sleep
+ 269222 T    sleep
+ 269224 R+   ps
+[?2004hcush> bg 1bg 1
+
+[?2004l[1] sleep 100| sleep 99| sleep 98| sleep 97
+[?2004hcush> kill 1kill 1
+
+[?2004lKilling job [1]
+[?2004hcush> Killed
+Killed
+Killed
+Killed
+sleep 6 | sleep 4 | sleep 2 &sleep 6 | sleep 4 | sleep 2 &
+
+[?2004l[1] 269628
+[?2004hcush> jobsjobs
+
+[?2004l[1]+  Running                 (sleep 6| sleep 4| sleep 2)
+[?2004hcush> jobsjobs
+
+[?2004l[1]+  Running                 (sleep 6| sleep 4| sleep 2)
+[?2004hcush> jobsjobs
+
+[?2004l[1]+  Running                 (sleep 6| sleep 4| sleep 2)
+[?2004hcush> 
