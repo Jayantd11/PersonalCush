@@ -32,8 +32,10 @@ void exit_command(void);
 void bg_command(int job_id);
 void fg_command(int job_id);
 void jobs_command(void);
+void cd_command(struct ast_command *cmd);
 void poisix_spawn_handler(struct ast_command_line *cline);
 bool handle_builtin(struct ast_command *cmd);
+
 
 static void
 usage(char *progname)
@@ -46,7 +48,6 @@ usage(char *progname)
 }
 
 /* Build a prompt */
-//BUILD THE FUCKING PROMT U CUNT
 static char *
 build_prompt(void)
 {
@@ -301,8 +302,6 @@ void handle_child_status(pid_t pid, int status) {
                     current_job->num_processes_alive--;
                     if (current_job->num_processes_alive == 0) {
                         if (current_job->status == FOREGROUND){
-                        //termstate_save(&current_job->saved_tty_state);
-                        //termstate_give_terminal_back_to_shell();
                          termstate_sample();
                         current_job->valid_tty_state = true;
                         
@@ -364,21 +363,18 @@ void poisix_spawn_handler(struct ast_command_line *cline) {
         posix_spawn_file_actions_init(&actions);
 
         // Combine desired flags
-        int flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_USEVFORK; // Combine flags here
+        int flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_USEVFORK;
 
         // Set the process group and other desired flags
-        posix_spawnattr_setpgroup(&attr, 0); // Create a new process group
-        posix_spawnattr_setflags(&attr, flags); // Set combined flags
+        posix_spawnattr_setpgroup(&attr, 0); 
+        posix_spawnattr_setflags(&attr, flags); 
 
-
-        // Iterate over commands in the current pipeline
         for (struct list_elem *cmd_elem = list_begin(&pipeline->commands); 
              cmd_elem != list_end(&pipeline->commands); 
              cmd_elem = list_next(cmd_elem)) {
             struct ast_command *cmd = list_entry(cmd_elem, struct ast_command, elem);
             char **argv = cmd->argv;
 
-            // Setup file actions for redirection if applicable
             if (pipeline->iored_input) {
                 posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_input, O_RDONLY), STDIN_FILENO);
             }
@@ -387,21 +383,16 @@ void poisix_spawn_handler(struct ast_command_line *cline) {
                 posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_output, flags, 0644), STDOUT_FILENO);
             }
 
-            // Call posix_spawnp to create the child process
             if (posix_spawnp(&pid, argv[0], &actions, &attr, argv, environ) != 0) {
                 perror("posix_spawnp failed");
                 break;
             }
 
-            // Add the job 
             add_job(pipeline);
 
-            // Clean up actions for the next command
             posix_spawn_file_actions_destroy(&actions);
             posix_spawnattr_destroy(&attr);
         }
-
-        // Wait for the last job in the pipeline to finish
         waitpid(pid, &status, 0);
     }
 }
@@ -409,6 +400,10 @@ void poisix_spawn_handler(struct ast_command_line *cline) {
 bool handle_builtin(struct ast_command *cmd) {
     if (strcmp(cmd->argv[0], "jobs") == 0) {
         jobs_command();
+        return true;
+    }
+    if (strcmp(cmd->argv[0], "cd") == 0) {
+        cd_command(cmd);
         return true;
     }
     if (strcmp(cmd->argv[0], "fg") == 0) {
@@ -475,7 +470,6 @@ int main(int ac, char *av[]) {
     tcsetpgrp(STDIN_FILENO, shell_pgid);
 
     /* Read/eval loop. */
-    //before proccesing the command line check for jobs with no active proccess and delete them
     for (;;) {
 
         /* If you fail this assertion, you were about to enter readline()
@@ -504,7 +498,7 @@ int main(int ac, char *av[]) {
 
         struct ast_command_line * cline = ast_parse_command_line(cmdline);
         free (cmdline);
-        if (cline == NULL)                  /* Error in command line */
+        if (cline == NULL)             
             continue;
 
         if (list_empty(&cline->pipes))
@@ -513,16 +507,15 @@ int main(int ac, char *av[]) {
             continue;
         }
 
-        //handle background jobs signal block for loop use posiwx spawn
         /* Reap completed background jobs */
         struct list_elem *e = list_begin(&job_list);
         while (e != list_end(&job_list)) {
             struct job *job = list_entry(e, struct job, elem);
             if (job->num_processes_alive == 0 && job->status != STOPPED) {
-                e = list_remove(e);  // Remove job from the list
-                delete_job(job);  // Remove job from the list
+                e = list_remove(e); 
+                delete_job(job);  
             } else {
-                e = list_next(e);  // Move to the next job
+                e = list_next(e);  
             }
         }
 
@@ -531,14 +524,14 @@ int main(int ac, char *av[]) {
             struct ast_pipeline *pipeline = list_entry(pipe_e, struct ast_pipeline, elem);
             struct ast_command *first_cmd = list_entry(list_begin(&pipeline->commands), struct ast_command, elem);
             if (handle_builtin(first_cmd)) {
-                pipe_e = list_remove(pipe_e); // Remove the pipeline from cline->pipes
+                pipe_e = list_remove(pipe_e);
                 continue;
             }
             signal_block(SIGCHLD);
             struct job *new_job = add_job(pipeline);
-            pipe_e = list_remove(pipe_e); // Remove the pipeline from cline->pipes
+            pipe_e = list_remove(pipe_e);
             //for loop iterate through list
-            pid_t first_pid = -1;  // To track the group process ID (gpid)
+            pid_t first_pid = -1;
             int pid_index = 0;
             
             int num_cmds = list_size(&pipeline->commands);
@@ -577,10 +570,8 @@ int main(int ac, char *av[]) {
                 posix_spawnattr_setflags(&attr, flags);
 
                 if (first_pid == -1) {
-                    // For the first process, create a new process group
                     posix_spawnattr_setpgroup(&attr, 0);
                 } else {
-                    // For subsequent processes, join the existing group
                     posix_spawnattr_setpgroup(&attr, new_job->gpid);
                 }
 
@@ -614,7 +605,6 @@ int main(int ac, char *av[]) {
                         posix_spawn_file_actions_adddup2(&actions, fds[(cmd_num - 1) * 2], STDIN_FILENO);
                     }
                     /* If not the last command, write to the next pipe */
-                // Use posix_spawnp to execute the command with attributes and actions
                     if (cmd_num < num_cmds - 1) {
                         posix_spawn_file_actions_adddup2(&actions, fds[cmd_num * 2 + 1], STDOUT_FILENO);
                         if (cmd->dup_stderr_to_stdout) {
@@ -660,26 +650,21 @@ int main(int ac, char *av[]) {
             }
 
         if (new_job->num_pids == 0) {
-            // No processes were spawned successfully
             signal_unblock(SIGCHLD);
             continue;
         }
 
         if (!pipeline->bg_job) {
-            //if status foreground wait for job
             new_job->status = FOREGROUND;
-            tcsetpgrp(STDIN_FILENO, new_job->gpid);  // Give terminal control to the job
-            wait_for_job(new_job);  // Wait for the job to complete
+            tcsetpgrp(STDIN_FILENO, new_job->gpid);
+            wait_for_job(new_job); 
             termstate_give_terminal_back_to_shell();
         } else {
-            //if background curr job jid curr job gpid
             new_job->status = BACKGROUND;
-            printf("[%d] %d\n", new_job->jid, new_job->gpid);  // Print background job info
+            printf("[%d] %d\n", new_job->jid, new_job->gpid);
         }
 
-        // Unblock signals once done
         signal_unblock(SIGCHLD);
-        //e = next_e; // Move to the next element
     }
 
         /* Free the command line.
@@ -691,7 +676,6 @@ int main(int ac, char *av[]) {
          * Otherwise, freeing here will cause use-after-free errors.
          */
        // ast_command_line_free(cline);
-       //iterate through jobs list and free jobs that are done. (remove that element form the job list)
        free(cline);
     }
     return 0;
@@ -785,4 +769,22 @@ void exit_command() {
     
     printf("Exiting shell...\n");
     exit(0);
+}
+
+void cd_command(struct ast_command *cmd) {
+    char *path;
+
+    if (cmd->argv[1] == NULL) {
+        path = getenv("HOME");
+        if (path == NULL) {
+            fprintf(stderr, "cd: HOME not set\n");
+            return;
+        }
+    } else {
+        path = cmd->argv[1];
+    }
+
+    if (chdir(path) != 0) {
+        perror("cd");
+    }
 }
