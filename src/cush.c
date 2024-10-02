@@ -58,8 +58,9 @@ enum job_status {
                        in the foreground state. */
     BACKGROUND,     /* job is running in background */
     STOPPED,        /* job is stopped via SIGSTOP */
-    COMPLETED,  /* job is stopped because it was a background job
+    NEEDSTERMINAL  /* job is stopped because it was a background job
                        and requires exclusive terminal access */
+
 };
 
 struct job {
@@ -161,8 +162,8 @@ get_status(enum job_status status)
         return "Running";
     case STOPPED:
         return "Stopped";
-    case COMPLETED:
-        return "Completed";
+    case NEEDSTERMINAL:
+        return "Stopped (tty)";
     default:
         return "Unknown";
     }
@@ -299,14 +300,13 @@ void handle_child_status(pid_t pid, int status) {
                 if (WIFEXITED(status)) {
                     current_job->num_processes_alive--;
                     if (current_job->num_processes_alive == 0) {
-                        if (current_job->status == FOREGROUND)
-                        //teremstate sample
-                        //save
-                        ` termstate_save(&current_job->saved_tty_state);
+                        if (current_job->status == FOREGROUND){
+                        //termstate_save(&current_job->saved_tty_state);
                         //termstate_give_terminal_back_to_shell();
-                        // termstate_sample();
+                         termstate_sample();
                         current_job->valid_tty_state = true;
-                        current_job->status = COMPLETED; // Use COMPLETED status
+                        
+                        }
                     }
                 } 
                 else if (WIFSIGNALED(status)) {
@@ -314,33 +314,20 @@ void handle_child_status(pid_t pid, int status) {
                     char *sig_name = strsignal(sig);
                     printf("%s\n", sig_name);
                     current_job->num_processes_alive--;
-                    if (current_job->status == FOREGROUND) {
-                       // termstate_save(&current_job->saved_tty_state);
-                       // termstate_give_terminal_to(&current_job->saved_tty_state, shell_pgid);
-                        current_job->status = COMPLETED;
-                    } else if (current_job->num_processes_alive == 0) {
-                        current_job->status = COMPLETED;
-                    }
                 }
                 else if (WIFSTOPPED(status)) {
                     //make a case for ctrlz
-                   if (WSTOPSIG(status) == SIGTSTP){
+                   if (WSTOPSIG(status) == SIGTSTP || (WSTOPSIG(status) == SIGSTOP)){
                     current_job->status = STOPPED;
                     termstate_save(&current_job->saved_tty_state);
                     current_job->valid_tty_state = true;
                     print_job(current_job);
-                    termstate_give_terminal_back_to_shell();
                    }
                    else{
-                    print_job(current_job);
-                    if(current_job->status == FOREGROUND){
-                    termstate_save(&current_job->saved_tty_state);
-                    current_job->valid_tty_state = true;
-                    termstate_give_terminal_back_to_shell();
+                    current_job->status = NEEDSTERMINAL;
                     }
-                    current_job->status = STOPPED;
                    }
-                } else if (WIFCONTINUED(status)) {
+                 else if (WIFCONTINUED(status)) {
                     if (current_job->status == STOPPED) {
                         current_job->status = BACKGROUND;
                     }
@@ -611,10 +598,10 @@ int main(int ac, char *av[]) {
                         flags |= O_TRUNC;
                     }
                     //needs to be a pipe dup2 the pipe to stdout
-                    // posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
+                     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
                     
                      if (cmd->dup_stderr_to_stdout) {
-                        if (posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDOUT_FILENO) != 0) {
+                        if (posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO) != 0) {
                             perror("posix_spawn_file_actions_adddup2 failed");
                             exit(EXIT_FAILURE);
                         }
@@ -697,7 +684,8 @@ int main(int ac, char *av[]) {
          * manage the lifetime of the associated ast_pipelines.
          * Otherwise, freeing here will cause use-after-free errors.
          */
-        ast_command_line_free(cline);
+       // ast_command_line_free(cline);
+       free(cline);
     }
     return 0;
 }
@@ -714,25 +702,18 @@ void fg_command(int job_id) {
     struct job *job = get_job_from_jid(job_id);
     
     if (job) {
-        if (job->status == COMPLETED) {
-            printf("Job [%d] has already completed\n", job->jid);
-            return;
+        if(job->num_processes_alive == 0){
+            printf("Job [%d] has already completed\n",job->jid);
         }
         signal_block(SIGCHLD);
-        termstate_sample();
-        //boolean variable
-        //if avlid termstate
-        //give termstate_give_terminal_back_to_shell//otherwise pass null
-        //give pgid saved terminal state
 
         if(job->valid_tty_state == true){
-            termstate_give_terminal_back_to_process();
+            termstate_give_terminal_to(&(job->saved_tty_state), job->gpid);
         }
         else{
-            termstate_give_terminal_back_to_process(NULL);
+            termstate_give_terminal_to(NULL, job->gpid);
         }
         job->status = FOREGROUND; 
-        // tcsetpgrp(STDIN_FILENO, job->gpid);
         print_cmdline(job->pipe);
         printf("\n");
         
@@ -748,7 +729,7 @@ void fg_command(int job_id) {
 void bg_command(int job_id) {
     struct job *job = get_job_from_jid(job_id);
     
-    if (job && (job->status == STOPPED || job->status == COMPLETED)) {
+    if (job && (job->status == STOPPED || job->status == NEEDSTERMINAL)) {
         job->status = BACKGROUND;
         printf("[%d] ", job->jid);
         print_cmdline(job->pipe);
