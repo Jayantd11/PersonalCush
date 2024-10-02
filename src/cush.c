@@ -600,12 +600,12 @@ int main(int ac, char *av[]) {
                     //needs to be a pipe dup2 the pipe to stdout
                      posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
                     
-                     if (cmd->dup_stderr_to_stdout) {
+                    if (cmd->dup_stderr_to_stdout) {
                         if (posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO) != 0) {
                             perror("posix_spawn_file_actions_adddup2 failed");
                             exit(EXIT_FAILURE);
                         }
-                }
+                    }
                 }
 
                 /* Set up pipes */
@@ -617,6 +617,12 @@ int main(int ac, char *av[]) {
                 // Use posix_spawnp to execute the command with attributes and actions
                     if (cmd_num < num_cmds - 1) {
                         posix_spawn_file_actions_adddup2(&actions, fds[cmd_num * 2 + 1], STDOUT_FILENO);
+                        if (cmd->dup_stderr_to_stdout) {
+                            if (posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO) != 0) {
+                                perror("posix_spawn_file_actions_adddup2 failed");
+                                exit(EXIT_FAILURE);
+                            }
+                        }
                     }
 
                     
@@ -685,6 +691,7 @@ int main(int ac, char *av[]) {
          * Otherwise, freeing here will cause use-after-free errors.
          */
        // ast_command_line_free(cline);
+       //iterate through jobs list and free jobs that are done. (remove that element form the job list)
        free(cline);
     }
     return 0;
