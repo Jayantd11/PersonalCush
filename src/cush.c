@@ -71,9 +71,11 @@ struct job {
     struct termios saved_tty_state;  /* The state of the terminal when this job was 
                                         stopped after having been in foreground */
 
+
     /* Add additional fields here if needed. */
     //ADD list pids tty gpid
-
+    //make boolean to save tty state
+    bool valid_tty_state;
     pid_t gpid;              /* Group process ID of the job */
     pid_t *pids;             /* Array of PIDs for processes in the job */
     int num_pids;            /* Number of processes in the job */
@@ -245,16 +247,11 @@ sigchld_handler(int sig, siginfo_t *info, void *_ctxt)
 static void
 wait_for_job(struct job *job)
 {
+    //revert
     assert(signal_is_blocked(SIGCHLD));
     
     termstate_save(&job->saved_tty_state);
-
-    struct sigaction sa_ignore, sa_oldint, sa_oldtstp;
-    sa_ignore.sa_handler = SIG_IGN;
-    sigemptyset(&sa_ignore.sa_mask);
-    sa_ignore.sa_flags = 0;
-    sigaction(SIGINT, &sa_ignore, &sa_oldint);
-    sigaction(SIGTSTP, &sa_ignore, &sa_oldtstp);
+    
 
     while (job->status == FOREGROUND && job->num_processes_alive > 0) {
         int status;
@@ -274,12 +271,7 @@ wait_for_job(struct job *job)
             handle_child_status(child, status);
         else
             utils_fatal_error("waitpid failed, see code for explanation");
-    }
-
-    sigaction(SIGINT, &sa_oldint, NULL);
-    sigaction(SIGTSTP, &sa_oldtstp, NULL);
-
-    
+    } 
 }
 
 /*
@@ -308,7 +300,12 @@ void handle_child_status(pid_t pid, int status) {
                     current_job->num_processes_alive--;
                     if (current_job->num_processes_alive == 0) {
                         if (current_job->status == FOREGROUND)
-                            termstate_give_terminal_back_to_shell();
+                        //teremstate sample
+                        //save
+                        ` termstate_save(&current_job->saved_tty_state);
+                        //termstate_give_terminal_back_to_shell();
+                        // termstate_sample();
+                        current_job->valid_tty_state = true;
                         current_job->status = COMPLETED; // Use COMPLETED status
                     }
                 } 
@@ -318,19 +315,31 @@ void handle_child_status(pid_t pid, int status) {
                     printf("%s\n", sig_name);
                     current_job->num_processes_alive--;
                     if (current_job->status == FOREGROUND) {
-                        termstate_give_terminal_to(&current_job->saved_tty_state, shell_pgid);
+                       // termstate_save(&current_job->saved_tty_state);
+                       // termstate_give_terminal_to(&current_job->saved_tty_state, shell_pgid);
                         current_job->status = COMPLETED;
                     } else if (current_job->num_processes_alive == 0) {
                         current_job->status = COMPLETED;
                     }
                 }
                 else if (WIFSTOPPED(status)) {
+                    //make a case for ctrlz
+                   if (WSTOPSIG(status) == SIGTSTP){
                     current_job->status = STOPPED;
                     termstate_save(&current_job->saved_tty_state);
-                    printf("[%d]+  %s                 (", current_job->jid, get_status(current_job->status));
-                    print_cmdline(current_job->pipe);
-                    printf(")\n");
+                    current_job->valid_tty_state = true;
+                    print_job(current_job);
                     termstate_give_terminal_back_to_shell();
+                   }
+                   else{
+                    print_job(current_job);
+                    if(current_job->status == FOREGROUND){
+                    termstate_save(&current_job->saved_tty_state);
+                    current_job->valid_tty_state = true;
+                    termstate_give_terminal_back_to_shell();
+                    }
+                    current_job->status = STOPPED;
+                   }
                 } else if (WIFCONTINUED(status)) {
                     if (current_job->status == STOPPED) {
                         current_job->status = BACKGROUND;
@@ -390,14 +399,6 @@ void poisix_spawn_handler(struct ast_command_line *cline) {
                 int flags = pipeline->append_to_output ? O_APPEND | O_WRONLY | O_CREAT : O_WRONLY | O_CREAT;
                 posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_output, flags, 0644), STDOUT_FILENO);
             }
-
-            // // For file redirection
-            // if (pipeline->iored_input) {
-            //     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, pipeline->iored_input, O_RDONLY, 0);
-            // }
-            // if (pipeline->iored_output) {
-            //     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            // }
 
             // Call posix_spawnp to create the child process
             if (posix_spawnp(&pid, argv[0], &actions, &attr, argv, environ) != 0) {
@@ -609,9 +610,17 @@ int main(int ac, char *av[]) {
                     } else {
                         flags |= O_TRUNC;
                     }
-                    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
-                    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+                    //needs to be a pipe dup2 the pipe to stdout
+                    // posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, pipeline->iored_output, flags, 0644);
+                    
+                     if (cmd->dup_stderr_to_stdout) {
+                        if (posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDOUT_FILENO) != 0) {
+                            perror("posix_spawn_file_actions_adddup2 failed");
+                            exit(EXIT_FAILURE);
+                        }
                 }
+                }
+
                 /* Set up pipes */
                 if (num_cmds > 1) {
                     if (cmd_num > 0) {
@@ -700,7 +709,7 @@ void jobs_command() {
         print_job(job);  
     }
 }
-
+//use termstate
 void fg_command(int job_id) {
     struct job *job = get_job_from_jid(job_id);
     
@@ -710,13 +719,26 @@ void fg_command(int job_id) {
             return;
         }
         signal_block(SIGCHLD);
+        termstate_sample();
+        //boolean variable
+        //if avlid termstate
+        //give termstate_give_terminal_back_to_shell//otherwise pass null
+        //give pgid saved terminal state
+
+        if(job->valid_tty_state == true){
+            termstate_give_terminal_back_to_process();
+        }
+        else{
+            termstate_give_terminal_back_to_process(NULL);
+        }
         job->status = FOREGROUND; 
-        tcsetpgrp(STDIN_FILENO, job->gpid);
+        // tcsetpgrp(STDIN_FILENO, job->gpid);
         print_cmdline(job->pipe);
         printf("\n");
         
         kill(-job->gpid, SIGCONT);
         wait_for_job(job);
+        termstate_give_terminal_back_to_shell();
         signal_unblock(SIGCHLD);
     } else {
         printf("No such job\n");
