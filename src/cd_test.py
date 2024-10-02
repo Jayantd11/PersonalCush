@@ -2,11 +2,6 @@
 #
 # cd_test: tests the cd command
 #
-# Tests the cd command for changing directories, including changing to
-# the home directory when invoked without arguments.
-# Requires the following commands to be implemented or otherwise usable:
-#
-#   cd, pwd, echo, exit
 #
 
 import sys, atexit, signal, time, threading, os

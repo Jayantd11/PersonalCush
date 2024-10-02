@@ -10,4 +10,3 @@
 3 basic/reap_on_child_termination_test.py
 5 basic/kill_test.py
 5 basic/signal_test.py
-1 basic/cd_test.py

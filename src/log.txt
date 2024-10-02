@@ -1,71 +1,21 @@
-[?2004hcush> sleep 10 | sleep 9sleep 10 | sleep 9
+[?2004hcush> cd /tmpcd /tmp
 
-[?2004l^Z[1]+  Stopped                 (sleep 10| sleep 9)
-[1]+  Stopped                 (sleep 10| sleep 9)
-[?2004hcush> jobsjobs
+[?2004l[?2004hcush> pwdpwd
 
-[?2004l[1]+  Stopped                 (sleep 10| sleep 9)
-[?2004hcush> bg 1bg 1
+[?2004l/tmp
+[?2004hcush> cdcd
 
-[?2004l[1] sleep 10| sleep 9
-[?2004hcush> jobsjobs
+[?2004l[?2004hcush> pwdpwd
 
-[?2004l[1]+  Running                 (sleep 10| sleep 9)
-[?2004hcush> kill 1kill 1
+[?2004l/home/ugrads/majors/ishitagupta
+[?2004hcush> cd /nonexistent_directory_for_testingcd /nonexistent_directory_for_testing
 
-[?2004lKilling job [1]
-[?2004hcush> Killed
-Killed
-ps --ppid 269209 -o pid,cmd,stat --no-headers | wc -lps --ppid 269209 -o pid,cmd,stat --no-headers | wc -l
+[?2004lcd: No such file or directory
+[?2004hcush> cd /home/ugrads/majors/ishitagupta/CS3214/project-1/srccd /home/ugrads/majors/ishitagupta/CS3214/project-1/src
 
-[?2004l2
-[?2004hcush> sleep 100 | sleep 99 | sleep 98 | sleep 97 &sleep 100 | sleep 99 | sleep 98 | sleep 97 &
+[?2004l[?2004hcush> pwdpwd
 
-[?2004l[1] 269219
-[?2004hcush> ps --ppid 269209 -o pid,stat,comm --no-headersps --ppid 269209 -o pid,stat,comm --no-headers
+[?2004l/home/ugrads/majors/ishitagupta/CS3214/project-1/src
+[?2004hcush> exitexit
 
-[?2004l 269219 S    sleep
- 269220 S    sleep
- 269221 S    sleep
- 269222 S    sleep
- 269223 R+   ps
-[?2004hcush> jobsjobs
-
-[?2004l[1]+  Running                 (sleep 100| sleep 99| sleep 98| sleep 97)
-[?2004hcush> stop 1stop 1
-
-[?2004lStopping job [1]
-[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
-[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
-[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
-[1]+  Stopped                 (sleep 100| sleep 99| sleep 98| sleep 97)
-[?2004hcush> ps --ppid 269209 -o pid,stat,comm --no-headersps --ppid 269209 -o pid,stat,comm --no-headers
-
-[?2004l 269219 T    sleep
- 269220 T    sleep
- 269221 T    sleep
- 269222 T    sleep
- 269224 R+   ps
-[?2004hcush> bg 1bg 1
-
-[?2004l[1] sleep 100| sleep 99| sleep 98| sleep 97
-[?2004hcush> kill 1kill 1
-
-[?2004lKilling job [1]
-[?2004hcush> Killed
-Killed
-Killed
-Killed
-sleep 6 | sleep 4 | sleep 2 &sleep 6 | sleep 4 | sleep 2 &
-
-[?2004l[1] 269628
-[?2004hcush> jobsjobs
-
-[?2004l[1]+  Running                 (sleep 6| sleep 4| sleep 2)
-[?2004hcush> jobsjobs
-
-[?2004l[1]+  Running                 (sleep 6| sleep 4| sleep 2)
-[?2004hcush> jobsjobs
-
-[?2004l[1]+  Running                 (sleep 6| sleep 4| sleep 2)
-[?2004hcush> 
+[?2004l
