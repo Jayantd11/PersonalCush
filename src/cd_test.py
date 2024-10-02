@@ -6,6 +6,7 @@
 
 import sys, atexit, signal, time, threading, os
 from testutils import *
+from tempfile import mkstemp
 
 console = setup_tests()
 
