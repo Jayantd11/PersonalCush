@@ -7,6 +7,7 @@
 #define _GNU_SOURCE    1
 #include <stdio.h>
 #include <readline/readline.h>
+#include <readline/history.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -406,6 +407,10 @@ bool handle_builtin(struct ast_command *cmd) {
         cd_command(cmd);
         return true;
     }
+    if (strcmp(cmd->argv[0], "history") == 0) {
+        history_command(cmd);
+        return true;
+    }
     if (strcmp(cmd->argv[0], "fg") == 0) {
         if (cmd->argv[1]) {
             int job_id = atoi(cmd->argv[1]);
@@ -468,7 +473,7 @@ int main(int ac, char *av[]) {
     shell_pgid = getpid();
     setpgid(shell_pgid, shell_pgid);
     tcsetpgrp(STDIN_FILENO, shell_pgid);
-
+    using_history();    
     /* Read/eval loop. */
     for (;;) {
 
@@ -493,8 +498,13 @@ int main(int ac, char *av[]) {
         char * cmdline = readline(prompt);
         free (prompt);
 
-        if (cmdline == NULL)  /* User typed EOF */
+        if (cmdline == NULL) { /* User typed EOF */
             break;
+        }
+
+        if (cmdline && *cmdline) {
+            add_history(cmdline);
+        }
 
         struct ast_command_line * cline = ast_parse_command_line(cmdline);
         free (cmdline);
