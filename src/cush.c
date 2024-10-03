@@ -34,7 +34,7 @@ void bg_command(int job_id);
 void fg_command(int job_id);
 void jobs_command(void);
 void cd_command(struct ast_command *cmd);
-void poisix_spawn_handler(struct ast_command_line *cline);
+void history_command(struct ast_command *cmd);
 bool handle_builtin(struct ast_command *cmd);
 
 
@@ -54,6 +54,11 @@ build_prompt(void)
 {
     return strdup("cush> ");
 }
+
+struct history_entry {
+    struct list_elem elem;  
+    char * cmdline;          
+};
 
 enum job_status {
     FOREGROUND,     /* job is running in foreground.  Only one job can be
@@ -346,57 +351,6 @@ void handle_child_status(pid_t pid, int status) {
 //record pids so i can track
 //terminal control handler
 //asserted all loop all comands and ad jobs to joblist then wait for job
-void poisix_spawn_handler(struct ast_command_line *cline) {
-    pid_t pid;
-    int status;
-
-    // Iterate over pipelines in the command line
-    for (struct list_elem *e = list_begin(&cline->pipes); 
-         e != list_end(&cline->pipes); 
-         e = list_next(e)) {
-        struct ast_pipeline *pipeline = list_entry(e, struct ast_pipeline, elem);
-
-        posix_spawnattr_t attr;
-        posix_spawn_file_actions_t actions;
-
-        // Initialize attributes and file actions
-        posix_spawnattr_init(&attr);
-        posix_spawn_file_actions_init(&actions);
-
-        // Combine desired flags
-        int flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_USEVFORK;
-
-        // Set the process group and other desired flags
-        posix_spawnattr_setpgroup(&attr, 0); 
-        posix_spawnattr_setflags(&attr, flags); 
-
-        for (struct list_elem *cmd_elem = list_begin(&pipeline->commands); 
-             cmd_elem != list_end(&pipeline->commands); 
-             cmd_elem = list_next(cmd_elem)) {
-            struct ast_command *cmd = list_entry(cmd_elem, struct ast_command, elem);
-            char **argv = cmd->argv;
-
-            if (pipeline->iored_input) {
-                posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_input, O_RDONLY), STDIN_FILENO);
-            }
-            if (pipeline->iored_output) {
-                int flags = pipeline->append_to_output ? O_APPEND | O_WRONLY | O_CREAT : O_WRONLY | O_CREAT;
-                posix_spawn_file_actions_adddup2(&actions, open(pipeline->iored_output, flags, 0644), STDOUT_FILENO);
-            }
-
-            if (posix_spawnp(&pid, argv[0], &actions, &attr, argv, environ) != 0) {
-                perror("posix_spawnp failed");
-                break;
-            }
-
-            add_job(pipeline);
-
-            posix_spawn_file_actions_destroy(&actions);
-            posix_spawnattr_destroy(&attr);
-        }
-        waitpid(pid, &status, 0);
-    }
-}
 
 bool handle_builtin(struct ast_command *cmd) {
     if (strcmp(cmd->argv[0], "jobs") == 0) {
@@ -797,4 +751,21 @@ void cd_command(struct ast_command *cmd) {
     if (chdir(path) != 0) {
         perror("cd");
     }
+}
+
+void history_command(struct ast_command *cmd) {
+    HISTORY_STATE *myhist = history_get_history_state();
+    HIST_ENTRY **mylist = history_list();
+
+    if (myhist == NULL || mylist == NULL) {
+        fprintf(stderr, "Error retrieving history.\n");
+        return;
+    }
+    for (int i = 0; i < myhist->length; i++) { 
+        if (mylist[i] != NULL) {  
+            printf("%d  %s\n", i + 1, mylist[i]->line); 
+    }
+    putchar('\n');
+    }
+
 }
