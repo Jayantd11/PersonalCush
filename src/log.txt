@@ -1,21 +1,25 @@
-[?2004hcush> cd /tmpcd /tmp
+[?2004hcush> echo test1echo test1
 
-[?2004l[?2004hcush> pwdpwd
+[?2004ltest1
+[?2004hcush> historyhistory
 
-[?2004l/tmp
-[?2004hcush> cdcd
+[?2004l1  echo test1
 
-[?2004l[?2004hcush> pwdpwd
+2  history
 
-[?2004l/home/ugrads/majors/ishitagupta
-[?2004hcush> cd /nonexistent_directory_for_testingcd /nonexistent_directory_for_testing
+[?2004hcush> echo test2echo test2
 
-[?2004lcd: No such file or directory
-[?2004hcush> cd /home/ugrads/majors/ishitagupta/CS3214/project-1/srccd /home/ugrads/majors/ishitagupta/CS3214/project-1/src
+[?2004ltest2
+[?2004hcush> historyhistory
 
-[?2004l[?2004hcush> pwdpwd
+[?2004l1  echo test1
 
-[?2004l/home/ugrads/majors/ishitagupta/CS3214/project-1/src
+2  history
+
+3  echo test2
+
+4  history
+
 [?2004hcush> exitexit
 
 [?2004lExiting shell...
